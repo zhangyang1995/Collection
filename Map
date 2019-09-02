@@ -1,0 +1,636 @@
+文章目录
+1. 散列表（哈希表）
+1.1 散列函数 hashCode()
+1.2 除留余数法
+1.3 基于拉链法的散列表
+1.4 基于线性探测法的散列表（开放地址散列表）
+2. HashMap源码分析
+2.1 继承关系
+2.2 主要成员
+2.3 Node和TreeNode
+2.4 HashMap原理总结（重要）
+2.5 构造函数
+2.6 tableSizeFor方法
+2.7 如何将hashCode转换成数组的索引（hash方法和取模运算）
+2.8 取模和位运算
+2.9 put添加键值对
+2.10 treeifyBin转换成红黑树
+2.11 resize扩充数组
+3. 扩展阅读
+1. 散列表（哈希表）
+这部分内容是科普散列表的实现原理，不会涉及HashMap的细节。后续分析HashMap时会结合这部分讲解。
+
+如果让我们设计一个可以存储“键值对”的容器，我们会想到什么方法。
+有可能是这样的：
+
+
+用一个数组来持有映射对象。但是这样的容器性能非常低下，例如我们想取出键为C的值，我们需要遍历这个数组，一一对比键是否相同。存入一个新的映射对象时，也是要遍历数组，看当中是否有相同的键。
+
+1.1 散列函数 hashCode()
+有没有一种方式，可以直接通过索引定位呢？
+例如，我们将a、b、c、d这些键通过某种方式转换成比较小的整数，将这个整数作为数组的索引呢？
+而散列函数就是为此诞生的，通过散列函数，我们可以得到任意一个对象的散列值。
+
+在java中，每个对象都会拥有一个hashCode()方法，这就是散列函数，通过这个方法会返回一个32位的整数。使用这么大的值作为散列值是为了尽量避免碰撞，例如两个不同对象的hashCode一样的话就是碰撞了。
+
+1.2 除留余数法
+直接使用32位的hashCode作为数组的索引明显是不可行的，int的取值范围可以有40亿之多，所以我们就需要将这个hashCode缩小到规定数组长度的范围内。
+
+假定有一个初始长度位M的数组，那么我们需要根据hashCode计算出一个0 ~ M-1的整数，一般情况下会使用除留余数法，实际上就是取模。
+
+f( key ) = key mod p ( p ≤ m )
+1
+在java中我们可以这样使用：
+
+private int hash(Object key) {
+    return (key.hashCode() & 0x7fffffff) % M;
+}
+1
+2
+3
+因为hashCode()可能返回一个负数，所以可以去掉最高位后再使用除留余数法。
+
+
+
+如图，这样不同的Key可能就会得计算出相同的值，也就是碰撞了。而碰撞处理有两种常用的方式：拉链法和线性探测法。
+
+1.3 基于拉链法的散列表
+长度为M的数组中的每个元素指向一条链表，链表中的每个节点都存储了散列值为该元素的索引的键值对，这种方式称为拉链法。而拉链法的基本思想就是选择足够大的M，使得所有链表都尽可能短以保证高效的查找。
+
+
+
+当我们选择数组的长度时应该大于元素个数，这样可以最大程度的减少碰撞，缩短链表的长度，毕竟链表的作用是处理碰撞。
+但是大多数情况，我们并不知道需要存入多少个元素，所以一般情况下会在存入元素时检查元素个数，然后扩充数组。
+
+1.4 基于线性探测法的散列表（开放地址散列表）
+处理碰撞的另一种方式就是用长度为M的数组保存N个键值对，其中M>N。
+然后我们需要利用数组中的空位解决碰撞冲突，基于这种策略的所有方法被统称为开放地址散列表。
+开放地址散列表中最简单的方法叫做线性探测法：当碰撞发生时，我们直接检查散列表的下一个位置（索引+1），这样的线性探测可能会产生三种结果：
+
+命中：该位置的键和被查找的键相同。
+未命中：该位置没有键。
+继续查找：该位置的键和被查找的键不同。
+因为开放地址散列表不需要在同一个索引位存入多个元素，所以一般采用并行数组存储。
+
+
+如图，在存入键为A I T S时，没有出现碰撞，按索引存入。但是当存入U时，发现U的位置已经被占用，这个时候就会开始探测下一个索引，如果为空，直接存入，否则再探测下一个。
+如果探测到数组末端都还没有探测到可使用的位置，那么会回到数组开头探测。
+
+删除操作：
+如何删除一个元素呢？仔细想想，直接将该键所在的位置设为null时不行的，因为这会使得在此位置之后的元素无法被查找。
+例如上图，如果我将索引为2的位置置空，那么当我想要找键为K的值时，最终会探测到索引为2的空位，那么程序就认为没有存入K这个键。
+所以，当删除A时，我们还要重新将键镞中的其它元素重新插入。T、U、K都会执行重新插入的操作，而最终K会被插入到合适的索引位2。（上面的S、I、A、T、U、K这几个键是连在一起的，组成了键镞。）
+
+可以看下面的一些代码加深对删除操作的理解：
+
+public void remove(Key key) {
+
+    if (!contains(key)) return; // 如果没有该Key，直接返回。
+
+    int i = hash(key);
+    while (!key.equals(keys[i]))
+        i = (i + 1) % M;  // 如果到达尾部，从数组头部开始
+
+    keys[i] = null;   // 删除该元素
+    values[i] = null;
+    N--;
+
+    i = (i + 1) % M;  // 将探针移动到下一个索引
+    while (keys[i] != null) { // 只要不是null那么这个元素就是键镞的一员，需要重新插入。
+        Key keyToRedo = keys[i];
+        Value valueToRedo = values[i];
+        keys[i] = null;
+        values[i] = null;
+        N--;
+        put(keyToRedo, valueToRedo);
+    }
+}
+
+就像拉链法中链表的长度会影响散列表的性能，而开放地址散列表的键镞长度也会影响到性能，一般会使用两倍以上元素个数的数组长度，并且也是需要动态的调整数组大小。
+
+2. HashMap源码分析
+源码版本基于 java version “1.8.0_144”
+
+懂了散列表的原理，那么HashMap分析起来就容易多了，HashMap是使用拉链法的方式实现的，并且某个链表长度过长时，会将该链表转换成红黑树提高性能。
+
+而HashMap的内部数组长度初始为16，如果需要扩展数组，那么规定是2的次方。例如16会扩充到32–>64–>128–>256–>512…
+这样扩充有两个原因：
+
+选择足够大的数组，让键值对更平均的分布在各个索引位，尽量减少链表长度。
+当使用除留余数法时，能使用位运算代替取模运算，很大程度上提高效率（据说是5~8倍）。
+N % M 等价于N & (M - 1)，M为2的次方。
+2.1 继承关系
+java.lang.Object
+    java.util.AbstractMap<K,V>
+        java.util.HashMap<K,V>
+
+public class HashMap<K,V>
+extends AbstractMap<K,V>
+implements Map<K,V>, Cloneable, Serializable
+
+2.2 主要成员
+/**
+  * 数组的默认初始长度，java规定hashMap的数组长度必须是2的次方
+  * 扩展长度时也是当前长度 << 1。
+  */
+static final int DEFAULT_INITIAL_CAPACITY = 1 << 4; // aka 16
+
+// 数组的最大长度
+static final int MAXIMUM_CAPACITY = 1 << 30;
+
+// 默认负载因子，当元素个数超过这个比例则会执行数组扩充操作。
+static final float DEFAULT_LOAD_FACTOR = 0.75f;
+
+// 树形化阈值，当链表节点个大于等于TREEIFY_THRESHOLD - 1时，
+// 会将该链表换成红黑树。
+static final int TREEIFY_THRESHOLD = 8;
+
+// 解除树形化阈值，当链表节点小于等于这个值时，会将红黑树转换成普通的链表。
+static final int UNTREEIFY_THRESHOLD = 6;
+
+// 最小树形化的容量，即：当内部数组长度小于64时，不会将链表转化成红黑树，而是优先扩充数组。
+static final int MIN_TREEIFY_CAPACITY = 64;
+
+// 这个就是hashMap的内部数组了，而Node则是链表节点对象。
+transient Node<K,V>[] table;
+
+// 下面三个容器类成员，作用相同，实际类型为HashMap的内部类KeySet、Values、EntrySet。
+// 他们的作用并不是缓存所有的key或者所有的value，内部并没有持有任何元素。
+// 而是通过他们内部定义的方法，从三个角度（视图）操作HashMap，更加方便的迭代。
+// 关注点分别是键，值，映射。
+transient Set<K>        keySet;  // AbstractMap的成员
+transient Collection<V> values; // AbstractMap的成员
+transient Set<Map.Entry<K,V>> entrySet;
+
+// 元素个数，注意和内部数组长度区分开来。
+transient int size;
+
+// 再上一篇文章中说过，是容器结构的修改次数，fail-fast机制。
+transient int modCount;
+
+// 阈值，超过这个值时扩充数组。 threshold = capacity * load factor，具体看上面的静态常量。
+int threshold;
+
+// 装在因子，具体看上面的静态常量。
+final float loadFactor;
+
+2.3 Node和TreeNode
+// 这个就是hashMap的内部数组了，而Node则是链表节点对象。
+transient Node<K,V>[] table;
+
+上面说过拉链法的散列表是通过链表解决碰撞问题的，所以hashMap的内部数组是节点类型。
+
+static class Node<K,V> implements Map.Entry<K,V> {
+        // hash是经过hash()方法处理过的hashCode，为了使hashCode分布更加随机，
+        // 待会会深入这个hash()方法。
+        final int hash;  
+        final K key;
+        V value;
+        Node<K,V> next;  // 下一个节点
+
+        Node(int hash, K key, V value, Node<K,V> next) {
+            this.hash = hash;
+            this.key = key;
+            this.value = value;
+            this.next = next;
+        }
+
+        public final int hashCode() {
+            // key的hashCode异或value的哈希Code
+            return Objects.hashCode(key) ^ Objects.hashCode(value);
+        }
+
+        // 其余略
+    }
+
+TreeNode是Node是子类，继承关系如下：Node是单向链表节点，Entry是双向链表节点，TreeNode是红黑树节点。
+
+java.util.HashMap<K, V>.Node<K, V>
+    java.util.LinkedMap<K, V>.Entry<K, V>
+        java.util.HashMap<K, V>.TreeNOde<K, V>
+
+TreeNode的代码400多行，是实现红黑树的节点，关于红黑树，我们可以再写一篇文章了，所以这里暂时不做解释，可以自行上网了解，或者等我的下一篇文章。
+
+static final class TreeNode<K,V> extends LinkedHashMap.Entry<K,V> {
+    TreeNode<K,V> parent;  // red-black tree links
+    TreeNode<K,V> left;
+    TreeNode<K,V> right;
+    TreeNode<K,V> prev;    // needed to unlink next upon deletion
+    
+    // 略
+}
+
+2.4 HashMap原理总结（重要）
+到了这里，其实我们对HashMap的实现原理已经有了个大概的了解，剩下的只是分析实现细节了。在此之前，我们先来总结下它的实现原理，面试如果问到HashMap，回答原理应该就能让面试官满意。
+
+HashMap是基于拉链法实现的一个散列表，内部由数组和链表实现。
+
+数组的初始容量为16，而容量是以2的次方扩充的，一是为了提高性能使用足够大的数组，二是为了能使用位运算代替取模预算。
+
+数组是否需要扩充是通过负载因子判断的，如果当前元素个数为数组容量的0.75时，就会扩充数组。这个0.75就是默认的负载因子，可由构造传入。我们也可以设置大于1的负载因子，这样数组就不会扩充，牺牲性能，节省内存。
+
+为了解决碰撞，数组中的元素是单向链表类型。当链表长度到达一个阈值时（7或8），会将链表转换成红黑树提高性能。而当链表长度缩小到另一个阈值时（6），又会将红黑树转换回单向链表提高性能，这里是一个平衡点。
+
+对于第三点补充说明，检查链表长度转换成红黑树之前，还会先检测当前数组数组是否到达一个阈值（64），如果没有到达这个容量，会放弃转换，先去扩充数组。所以上面也说了链表长度的阈值是7或8，因为会有一次放弃转换的操作。
+
+2.5 构造函数
+认真看注释部分。
+
+// 默认数组初始容量为16，负载因子为0.75f
+public HashMap() {
+    this.loadFactor = DEFAULT_LOAD_FACTOR; // all other fields defaulted
+}
+
+public HashMap(int initialCapacity) {
+    this(initialCapacity, DEFAULT_LOAD_FACTOR);
+}
+
+public HashMap(int initialCapacity, float loadFactor) {
+    if (initialCapacity < 0)
+        throw new IllegalArgumentException("Illegal initial capacity: " +
+                initialCapacity);
+    if (initialCapacity > MAXIMUM_CAPACITY)
+        initialCapacity = MAXIMUM_CAPACITY;
+
+    // NaN：Not a Number。例如给-1开方就会得到NaN。
+    if (loadFactor <= 0 || Float.isNaN(loadFactor))
+        throw new IllegalArgumentException("Illegal load factor: " +
+                loadFactor);
+    this.loadFactor = loadFactor;
+
+    // 这个方法可以将任意一个整数转换成2的次方。
+    // 例如输入10，则会返回16。
+    // 另外，有人可能疑惑，不是说threshold是 数组容量 * loadFactor得到的吗？
+    // 是的，在第一次put操作，扩充数组时，会将这个threshold作为数组容量，然后再重新计算这个值。
+    this.threshold = tableSizeFor(initialCapacity);
+}
+
+public HashMap(Map<? extends K, ? extends V> m) {
+    this.loadFactor = DEFAULT_LOAD_FACTOR;
+    putMapEntries(m, false);
+}
+
+2.6 tableSizeFor方法
+public HashMap(int initialCapacity, float loadFactor)这个构造可以由我们指定数组的初始容量和负载因子。
+但是前面说过，数组容量必须是2的次方。所以就需要通过某个算法将我们给的数值转换成2的次方。
+tableSizeFor(int cap)就是这个作用。
+
+// 这个方法可以将任意一个整数转换成2的次方。
+static final int tableSizeFor(int cap) {
+    int n = cap - 1;
+    n |= n >>> 1;
+    n |= n >>> 2;
+    n |= n >>> 4;
+    n |= n >>> 8;
+    n |= n >>> 16;
+    return (n < 0) ? 1 : (n >= MAXIMUM_CAPACITY) ? MAXIMUM_CAPACITY : n + 1;
+}
+
+原理实际上就是补位，将原本为0的空位填补为1，最后加1时，最高有效位进1，其余变为0。
+例如1010 0101最后会变成1111 1111，然后+1变成了 1 0000 0000，为2的8次方，上面代码中int n = cap - 1先减去1就是为了最后面这个+1操作。
+
+为了演示这个原理，我选一个比较特别的数字，1024，它的二进制为0000 0100 0000 0000。这样可以更直观的看到这些位运算是如何补位的（这里就不做减1和加1的操作演示了）。
+
+首先，将n 右移 1位，再进行或运算：
+
+  0000 0100 0000 0000
+| 0000 0010 0000 0000
+-------------------------------
+  0000 0110 0000 0000
+
+可以看到，我们最高有效位的右边就**“错位复制”**了一个1出来。
+这个时候再右移两位：
+
+  0000 0110 0000 0000
+| 0000 0001 1000 0000
+-------------------------------
+  0000 0111 1000 0000
+
+将原有的两个1**“错位复制”**到了4个。
+再右移4位：
+
+  0000 0111 1000 0000
+| 0000 0000 0111 1000
+------------------------------
+  0000 0111 1111 1000
+
+**“错位复制”**到了8个1。
+再右移8位：
+
+  0000 0111 1111 1000
+| 0000 0000 0000 0111
+------------------------------
+  0000 0111 1111 1111
+
+这个时候，我们已经成功将低位的0全部变成了1，真的是十分巧妙的算法。
+而后面还有个右移16位的操作，我们的测试数字比较小，所以用不上了，但是这样可以保证一个32位的int类型将所有低位的0变为1。
+
+这个时候如果再加1，那么就会进位，后面全补0，那么这个数就是2的次方了，因为二进制中每一位都是2的次方。
+另外，可以看看Integer.highestOneBit方法，也是运用的这个原理。
+
+2.7 如何将hashCode转换成数组的索引（hash方法和取模运算）
+上面的例子中我们知道了通过构造传入初始容量时，数组的初始容量是如何计算的。
+那么现在，我们也要知道，HashMap是如何将hashCode转换成数组索引的。
+
+首先我们看在put方法中，用到了hash方法。
+
+public V put(K key, V value) {
+    return putVal(hash(key), key, value, false, true);
+}
+
+static final int hash(Object key) {
+    int h;
+    return (key == null) ? 0 : (h = key.hashCode()) ^ (h >>> 16);
+}
+
+hash方法的作用是将hashCode进一步的混淆，增加其“随机度”，试图减少插入hash map时的hash冲突，换句更专业的话来说就是提高离散性能。而这个方法知乎上有人回答时称为“扰动函数”。
+
+上面的代码只是用hashCode的高16位与低16位进行异或运算，为什么就能提高离散性能呢？
+这里还是要看hashCode转换成数组索引时的取模运算。
+
+在putVal方法中（不仅仅只在putVal中），有这么一行代码
+
+ if ((p = tab[i = (n - 1) & hash]) == null)
+        tab[i] = newNode(hash, key, value, null);
+
+i = (n - 1) & hash，n是数组长度，hash就是通过hash()方法进行高低位异或运算得出来的hash值。
+这个表达式就是hash值的取模运算，上面已经说过当除数数为2的次方时，可以用与运算提高性能。
+
+那么我们想想，大多数情况下，内部数组的容量一般都不会很大，基本分布在16~256之间。所以一个32位的hashCode，一直都用最低的4到8位进行与运算，而高位几乎没有参与。
+
+所以通过hash()方法，将hashCode高16位与低16位进行异或运算，能有效的提高离散性能。
+引用美团点评技术团队的图片来展示下，当数组为初始长度16时，将hashCode转换成数组索引的过程。
+
+
+2.8 取模和位运算
+科普：
+实际上java中%符号是求余（rem），而不是取模（mod）。在除数和被除数都为正数时，取模和取余的结果是一样的，区别在于有负数出现的时候。
+所以我们容易混淆这两个概念，而在某些编程语言中%符号代表取模，所以很难区分它的叫法，我们知道%在自己使用的编程语言中代表什么就行了。
+
+现在，我们可以来解释下当除数为2的次方时，取余运算可以用与运算代替的原理。
+首先，我们知道2的次方的数，用二进制表示如下，是不会出现有两个1的情况。
+
+0000 0001 // 1
+0000 0010 // 2
+0000 0100 // 4
+0000 1000 // 8
+0001 0000 // 16
+0010 0000 // 32
+0100 0000 // 64
+1000 0000 // 128
+
+当我们除以2的n次方时，可以看作是将二进制右移n位。例如123除以8，实际上就是123的二进制右移3位。
+
+123 / 8
+// 用移位运算可以表示为右移3位：
+1111011 >> 3
+
+123除以4的结果为15，那么余数呢？
+余数正是被移位运算移走的最低3位，011，也就是余数为3。
+
+是不是好想发现了新大陆？原来移位运算移走的那些二进制就是余数！
+
+那么，我们只要将被移走的这3位保存起来，实际上就得到了余数，问题是怎么保存呢？
+没错，通过与运算，例如一个数和15进行与运算（二进制为0000 1111），就可以取到该数的低4位。
+
+而上面例子中，我们只要能和7（二进制为0000 0111）做与运算就可以直接得到余数了！
+
+大家发现了什么没有，8的二进制为 0000 1000，如果减去1，是不是正好为0000 0111？
+
+那么，只要我们 123 & （8 - 1），就可以取到123 / 8的余数了！也就是 N % M == N & (M - 1)
+
+2.9 put添加键值对
+public V put(K key, V value) {
+    return putVal(hash(key), key, value, false, true);
+}
+
+// onlyIfAbsent：当存入键值对时，如果该key已存在，是否覆盖它的value。false为覆盖，true为不覆盖。
+//               参考putIfAbsent()方法。
+// evict：用于子类LinkedHashMap。
+final V putVal(int hash, K key, V value, boolean onlyIfAbsent,
+               boolean evict) {
+    // tab：内部数组
+    // p：hash对应的索引位中的首节点
+    // n：内部数组的长度
+    // i：hash对应的索引位
+    HashMap.Node<K,V>[] tab; HashMap.Node<K,V> p; int n, i;
+    
+    // 首次put时，内部数组为空，扩充数组。
+    if ((tab = table) == null || (n = tab.length) == 0)
+        n = (tab = resize()).length;
+    // 计算数组索引，获取该索引位置的首节点，如果为null，添加一个新的节点
+    if ((p = tab[i = (n - 1) & hash]) == null)
+        tab[i] = newNode(hash, key, value, null);
+    else {   
+        HashMap.Node<K,V> e; K k;
+        // 如果首节点的key和要存入的key相同，那么直接覆盖value的值。
+        if (p.hash == hash &&
+                ((k = p.key) == key || (key != null && key.equals(k))))
+            e = p;
+        // 如果首节点是红黑树的，将键值对插添加到红黑树
+        else if (p instanceof HashMap.TreeNode)
+            e = ((HashMap.TreeNode<K,V>)p).putTreeVal(this, tab, hash, key, value);
+        // 此时首节点为链表，如果链表中存在该键值对，直接覆盖value。
+        // 如果不存在，则在末端插入键值对。然后判断链表是否大于等于7，尝试转换成红黑树。
+        // 注意此处使用“尝试”，因为在treeifyBin方法中还会判断当前数组容量是否到达64，
+        // 否则会放弃次此转换，优先扩充数组容量。
+        else {
+        	// 走到这里，hash碰撞了。检查链表中是否包含key，或将键值对添加到链表末尾
+            for (int binCount = 0; ; ++binCount) {
+                // p.next == null，到达链表末尾，添加新节点，如果长度足够，转换成树结构。
+                if ((e = p.next) == null) {
+                    p.next = newNode(hash, key, value, null);
+                    if (binCount >= TREEIFY_THRESHOLD - 1) // -1 for 1st
+                        treeifyBin(tab, hash);
+                    break;
+                }
+                // 检查链表中是否已经包含key
+                if (e.hash == hash &&
+                        ((k = e.key) == key || (key != null && key.equals(k))))
+                    break;
+                p = e;
+            }
+        }
+
+        // 覆盖value的方法。
+        if (e != null) { // existing mapping for key
+            V oldValue = e.value;
+            if (!onlyIfAbsent || oldValue == null)
+                e.value = value;
+            afterNodeAccess(e);
+            return oldValue;
+        }
+    }
+    ++modCount; // fail-fast机制
+    
+    // 如果元素个数大于阈值，扩充数组。
+    if (++size > threshold)
+        resize();
+    afterNodeInsertion(evict);
+    return null;
+}
+
+细心看注释部分，总结来说就是以下几个步骤：
+
+检查数组是否为空，执行resize()扩充；
+通过hash值计算数组索引，获取该索引位的首节点。
+如果首节点为null，直接添加节点到该索引位。
+如果首节点不为null，那么有3种情况
+① key和首节点的key相同，覆盖value；否则执行②或③
+② 如果首节点是红黑树节点（TreeNode），将键值对添加到红黑树。
+③ 如果首节点是链表，将键值对添加到链表。添加之后会判断链表长度是否到达TREEIFY_THRESHOLD - 1这个阈值，“尝试”将链表转换成红黑树。
+最后判断当前元素个数是否大于threshold，扩充数组。
+2.10 treeifyBin转换成红黑树
+/**
+ * Replaces all linked nodes in bin at index for given hash unless
+ * table is too small, in which case resizes instead.
+ */
+final void treeifyBin(Node<K,V>[] tab, int hash) {
+    int n, index; Node<K,V> e;
+    // 如果当前数组容量太小（小于64），放弃转换，扩充数组。
+    if (tab == null || (n = tab.length) < MIN_TREEIFY_CAPACITY)
+        resize(); 
+    } else if ((e = tab[index = (n - 1) & hash]) != null) {
+        // 将链表转成红黑树，略 
+    }
+}
+
+补充下上面，为什么说添加节点到链表后，会尝试将链表转换成红黑树。
+因为如果当前数组容量太小，会先去扩充数组。
+
+2.11 resize扩充数组
+重新计算数组索引的解释部分来自：知乎-美团：Java 8系列之重新认识HashMap
+
+扩充数组不单单只是让数组长度翻倍，将原数组中的元素直接存入新数组中这么简单。
+因为元素的索引是通过hash&(n - 1)得到的，那么数组的长度由n变为2n，重新计算的索引就可能和原来的不一样了。
+在jdk1.7中，是通过遍历每一个元素，每一个节点，重新计算他们的索引值，存入新的数组中，称为rehash操作。
+
+而java1.8对此进行了一些优化，因为当数组长度是通过2的次方扩充的，那么会发现以下规律：
+元素的位置要么是在原位置，要么是在原位置再移动2次幂的位置。看下图可以明白这句话的意思，n为数组的长度，图（a）表示扩容前的key1和key2两种key确定索引位置的示例，图（b）表示扩容后key1和key2两种key确定索引位置的示例，其中hash1是key1对应的哈希与高位运算结果。
+
+
+元素在重新计算hash之后，因为n变为2倍，那么n-1的mask范围在高位多1bit(红色)，因此新的index就会发生这样的变化：
+
+
+
+因此，我们在扩充HashMap的时候，不需要像JDK1.7的实现那样重新计算hash，只需要看看原来的hash值新增的那个bit是1还是0就好了，是0的话索引没变，是1的话索引变成“原索引+oldCap”，可以看看下图为16扩充为32的resize示意图：
+
+
+这个设计确实非常的巧妙，既省去了重新计算hash值的时间，而且同时，由于新增的1bit是0还是1可以认为是随机的，因此resize的过程，均匀的把之前的冲突的节点分散到新的bucket了。这一块就是JDK1.8新增的优化点。有一点注意区别，JDK1.7中rehash的时候，旧链表迁移新链表的时候，如果在新表的数组索引位置相同，则链表元素会倒置（因为从一个链表存遍历到另一个链表时导致倒置了），但是从上图可以看出，JDK1.8不会倒置。有兴趣的同学可以研究下JDK1.8的resize源码，写的很赞，如下:
+
+下面代码可以分为两部分来看，上半部分是从新计算数组的长度和阈值。下半部分是将原数组的元素拷贝到新数组中。
+
+final HashMap.Node<K,V>[] resize() {
+    HashMap.Node<K,V>[] oldTab = table;
+    int oldCap = (oldTab == null) ? 0 : oldTab.length;
+    int oldThr = threshold;
+    int newCap, newThr = 0;
+    if (oldCap > 0) {
+        // 如果数组已经是最大长度，不进行扩充。
+        if (oldCap >= MAXIMUM_CAPACITY) {
+            threshold = Integer.MAX_VALUE;
+            return oldTab;
+        }
+        // 否则数组容量扩充一倍。（2的N次方）
+        else if ((newCap = oldCap << 1) < MAXIMUM_CAPACITY &&
+                oldCap >= DEFAULT_INITIAL_CAPACITY)
+            newThr = oldThr << 1; // double threshold
+    }
+    // 如果数组还没创建，但是已经指定了threshold（这种情况是带参构造创建的对象），threshold的值为数组长度
+    // 在 "构造函数" 那块内容进行过说明。
+    else if (oldThr > 0) // initial capacity was placed in threshold
+        newCap = oldThr;
+    // 这种情况是通过无参构造创建的对象
+    else {               // zero initial threshold signifies using defaults
+        newCap = DEFAULT_INITIAL_CAPACITY;
+        newThr = (int)(DEFAULT_LOAD_FACTOR * DEFAULT_INITIAL_CAPACITY);
+    }
+    // 可能是上面newThr = oldThr << 1时，最高位被移除了，变为0。
+    if (newThr == 0) {
+        float ft = (float)newCap * loadFactor;
+        newThr = (newCap < MAXIMUM_CAPACITY && ft < (float)MAXIMUM_CAPACITY ?
+                (int)ft : Integer.MAX_VALUE);
+    }
+    threshold = newThr;
+  
+    // 到了这里，新的数组长度已经被计算出来，创建一个新的数组。
+    @SuppressWarnings({"rawtypes","unchecked"})
+    HashMap.Node<K,V>[] newTab = (HashMap.Node<K,V>[])new HashMap.Node[newCap];
+    table = newTab;
+    
+    // 下面代码是将原来数组的元素转移到新数组中。问题在于，数组长度发生变化。 
+    // 那么通过hash%数组长度计算的索引也将和原来的不同。
+    // jdk 1.7中是通过重新计算每个元素的索引，重新存入新的数组，称为rehash操作。
+    // 这也是hashMap无序性的原因之一。而现在jdk 1.8对此做了优化，非常的巧妙。
+    if (oldTab != null) {
+        
+        // 遍历原数组
+        for (int j = 0; j < oldCap; ++j) {
+            // 取出首节点
+            HashMap.Node<K,V> e;
+            if ((e = oldTab[j]) != null) {
+                oldTab[j] = null;
+                // 如果链表只有一个节点，那么直接重新计算索引存入新数组。
+                if (e.next == null)
+                    newTab[e.hash & (newCap - 1)] = e;
+                // 如果该节点是红黑树，执行split方法，和链表类似的处理。
+                else if (e instanceof HashMap.TreeNode)
+                    ((HashMap.TreeNode<K,V>)e).split(this, newTab, j, oldCap);
+                
+                // 此时节点是链表
+                else { // preserve order
+                    // loHead，loTail为原链表的节点，索引不变。
+                    HashMap.Node<K,V> loHead = null, loTail = null;
+                    // hiHeadm, hiTail为新链表节点，原索引 + 原数组长度。
+                    HashMap.Node<K,V> hiHead = null, hiTail = null;
+                    HashMap.Node<K,V> next;
+                    
+                   // 遍历链表
+                    do {
+                        next = e.next;
+                        // 新增bit为0的节点，存入原链表。
+                        if ((e.hash & oldCap) == 0) {
+                            if (loTail == null)
+                                loHead = e;
+                            else
+                                loTail.next = e;
+                            loTail = e;
+                        }
+                        // 新增bit为1的节点，存入新链表。
+                        else {
+                            if (hiTail == null)
+                                hiHead = e;
+                            else
+                                hiTail.next = e;
+                            hiTail = e;
+                        }
+                    } while ((e = next) != null);
+                    // 原链表存回原索引位
+                    if (loTail != null) {
+                        loTail.next = null;
+                        newTab[j] = loHead;
+                    }
+                    // 新链表存到：原索引位 + 原数组长度
+                    if (hiTail != null) {
+                        hiTail.next = null;
+                        newTab[j + oldCap] = hiHead;
+                    }
+                }
+            }
+        }
+    }
+    return newTab;
+}
+
+总结来说：
+先计算新数组的长度和新的阈值（threshold），然后将旧数组的内容迁移到新数组中，和1.7相比不需要执行rehash操作。因为以2次幂扩展的数组可以简单通过新增的bit判断索引位。
+
+不过无论是1.7还是1.8版本，HashMap的扩充总归是挺消耗性能的。所以如果知道需要存入的大概数量，手动指定数组初始长度是比较好的选择。另外，如果对于内存要求比较高，可以将装载因子（loadFactor）设置成大于1的值，那么内部数组就不会进行扩充操作了，但是牺牲了性能。
+
+关于HashMap的源码分析到此结束。其余的remove等方法都是以相同的方式操作数组和链表，下面分析HashMap的线程安全问题。
+
+3. 扩展阅读
+HashMap的线程安全性
+HashMap，1.7和1.8性能对比。
+
+原文链接：https://blog.csdn.net/u010386612/article/details/80302777
